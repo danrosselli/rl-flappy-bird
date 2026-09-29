@@ -15,11 +15,11 @@ Online one-step TD advantage updates, with a separate actor and critic network, 
   - **Actor**: 8→64→64→2 (softmax) — outputs action probabilities
   - **Critic**: 8→64→64→1 (linear) — estimates state value V(s)
 - **Update rule**: One-step TD advantage
-  - Advantage: A = r + γ·V(s') - V(s)
-  - Actor loss: -log π(a|s) · A
-  - Critic loss: A²
+  - Advantage: A = r + γ·V(s') - V(s), clipped to ±5
+  - Actor loss: -log π(a|s) · A - 0.01·H(π)
+  - Critic loss: Huber(δ=5) on the TD error
 - **Training**: Online — one gradient update per frame. No trajectory buffer.
-- **Rewards**: survival bonus (+0.05/frame), pipe passage (+10), collision (-20), velocity penalty (-0.05 when |velY| > 700), flap penalty (-0.1 per flap), and Gaussian proximity shaping toward the current gap center.
+- **Rewards**: pipe passage (+10), collision (-20), velocity penalty (-0.05 when |velY| > 700), flap penalty (-0.05 per flap), and Gaussian proximity shaping (σ=0.5) toward the current gap center. No per-frame survival bonus — same reward structure as 006.
 - **Exploration**: Softmax policy sampling (no epsilon-greedy — action probabilities come directly from the actor).
 
 ## Key Differences from REINFORCE (006)
@@ -38,4 +38,6 @@ Learning rate (actor): 0.001
 Learning rate (critic): 0.002
 Gamma: 0.99
 Update frequency: every step (online)
-Advantage: one-step TD
+Advantage: one-step TD, clipped to ±5
+Entropy bonus: 0.01
+Critic loss: Huber, δ = 5

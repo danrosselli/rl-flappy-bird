@@ -6,20 +6,27 @@
     "actorLearningRate": 0.001,
     "criticLearningRate": 0.002,
     "gamma": 0.99,
+    "entropyCoefficient": 0.01,
+    "advantageClip": 5,
+    "huberDelta": 5,
     "updateFrequency": "every step (online)",
-    "advantage": "one-step TD: A = r + γ·V(s') - V(s)"
+    "advantage": "one-step TD: A = r + γ·V(s') - V(s), clipped to ±5"
   },
 
   "rewards": {
-    "survival": 0.05,
     "passPipe": 10,
     "collision": -20,
     "velocityPenalty": -0.05,
-    "proximity": "gaussian(absDy / (scale.height/2), sigma=0.5), clamped >= 0"
+    "flapPenalty": -0.05,
+    "proximity": "gaussian(absDy / (scale.height/2), sigma=0.5), range [0, 1]; 0 when no pipe is ahead"
+  },
+
+  "exploration": {
+    "strategy": "softmax-policy"
   },
 
   "results": {
-    "episodes": 0,
-    "bestScore": 0
+    "episodes": 127,
+    "bestScore": 23
   }
 }

@@ -13,7 +13,6 @@ export class Game extends Phaser.Scene {
 		this.highScore = 0;
 		this.lastState = null;
 		this.lastAction = null;
-		this.lastLogProb = null;
 		this.lastValue = null;
 		this.agent = new ActorCriticAgent();
 	}
@@ -46,9 +45,7 @@ export class Game extends Phaser.Scene {
 		this.score = 0;
 		this.lastState = null;
 		this.lastAction = null;
-		this.lastLogProb = null;
 		this.lastValue = null;
-		this.agent.resetEpisode();
 		this.zones = [];
 		this.bonusReward = 0;
 		this.proximityReward = 0;
@@ -93,12 +90,13 @@ export class Game extends Phaser.Scene {
 		});
 
 		// HUD Text (agora no lado direito)
-		this.hudText = this.add.text(this.scale.width - 50, 30, '', {
+		this.hudText = this.add.text(this.scale.width, 30, '', {
 			fontSize: '18px',
 			fill: '#ff0',
 			stroke: '#000',
 			strokeThickness: 3,
-			align: 'left'  // Alinha o texto à direita
+			align: 'left',
+			fixedWidth: 220
 		}).setOrigin(1, 0);  // Origem no canto superior direito
 		this.hudText.setDepth(1000);
 
@@ -106,10 +104,10 @@ export class Game extends Phaser.Scene {
 		this.hudBackground = this.add.rectangle(
 			this.scale.width - 20,  // Mesmo X do texto (alinhado à direita)
 			20,                     // Mesmo Y do topo do texto
-			200,                    // Largura fixa (ajuste se precisar mais/menos)
+			210,                    // Largura fixa (ajuste se precisar mais/menos)
 			400,                    // Altura aproximada (cobre todo o texto)
 			0x000000,               // Cor preta
-			0.2                     // Alpha 0.6 = semi-transparente
+			0.2                     // Alpha = semi-transparente
 		).setOrigin(1, 0);          // Origem no canto superior direito
 
 		this.hudBackground.setStrokeStyle(1, 0x000000, 0.8);  // Borda preta opcional
@@ -259,8 +257,8 @@ export class Game extends Phaser.Scene {
 		if (this.lastState !== null && this.lastAction !== null) {
 			const reward = this.proximityReward + velPenalty + flapPenalty + this.bonusReward;
 			this.agent.update(
-				this.lastState, this.lastAction, this.lastLogProb,
-				this.lastValue, reward, currentState, false
+				this.lastState, this.lastAction, this.lastValue,
+				reward, currentState, false
 			);
 		}
 		this.bonusReward = 0;
@@ -279,7 +277,6 @@ export class Game extends Phaser.Scene {
 		// 6. Armazenar para Próximo Frame
 		this.lastState = currentState;
 		this.lastAction = action;
-		this.lastLogProb = policyDecision.logProb;
 		this.lastValue = policyDecision.value;
 
 		// 7. Física e Limpeza
@@ -449,8 +446,8 @@ export class Game extends Phaser.Scene {
 		if (this.lastState !== null && this.lastAction !== null) {
 			// Terminal update: done=true forces V(s') = 0 in the advantage calculation.
 			this.agent.update(
-				this.lastState, this.lastAction, this.lastLogProb,
-				this.lastValue, deathReward, this.lastState, true
+				this.lastState, this.lastAction, this.lastValue,
+				deathReward, this.lastState, true
 			);
 		}
 

@@ -22,7 +22,7 @@
     ],
     "optimizer": "adam",
     "optimizerParams": {"learningRate": 0.001},
-    "loss": "-log π(a|s) * A (policy gradient)"
+    "loss": "-log π(a|s) * A - 0.01 * H(π) (policy gradient + entropy bonus)"
   },
   "critic": {
     "architecture": "sequential",
@@ -33,7 +33,7 @@
     ],
     "optimizer": "adam",
     "optimizerParams": {"learningRate": 0.002},
-    "loss": "meanSquaredError"
+    "loss": "huber (delta 5) on the one-step TD error"
   },
   "exploration": {
     "strategy": "softmax-policy",
