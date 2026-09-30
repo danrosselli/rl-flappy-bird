@@ -20,9 +20,9 @@
       {"type": "dense", "units": 64, "activation": "relu"},
       {"type": "dense", "units": 2, "activation": "softmax"}
     ],
-    "optimizer": "adam",
+    "optimizer": "sgd",
     "optimizerParams": {"learningRate": 0.001},
-    "loss": "-log π(a|s) * A - 0.01 * H(π) (policy gradient + entropy bonus)"
+    "loss": "-log π(a|s) * I * A (policy gradient; I = γ^t, reset per episode)"
   },
   "critic": {
     "architecture": "sequential",
@@ -31,9 +31,9 @@
       {"type": "dense", "units": 64, "activation": "relu"},
       {"type": "dense", "units": 1, "activation": "linear"}
     ],
-    "optimizer": "adam",
+    "optimizer": "sgd",
     "optimizerParams": {"learningRate": 0.002},
-    "loss": "huber (delta 5) on the one-step TD error"
+    "loss": "0.5 * (target - V(s))^2 — squared TD error (semi-gradient TD(0))"
   },
   "exploration": {
     "strategy": "softmax-policy",

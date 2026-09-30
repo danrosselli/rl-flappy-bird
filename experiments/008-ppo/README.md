@@ -14,13 +14,14 @@ PPO's clipped objective prevents destructive large policy updates, while GAE-lam
 |--------|-----------------|---------|
 | Update timing | Every frame (online) | Every 128 steps (batched) |
 | Advantage | 1-step TD: r + γV(s') - V(s) | GAE-lambda (γ=0.99, λ=0.95) |
-| Actor loss | -log π(a|s) * A | -min(r·A, clip(r)·A) |
-| Critic loss | Huber(delta=5) | MSE(V(s), returns) |
+| Actor loss | -log π(a|s) · I · A (I = γᵗ) | -min(r·A, clip(r)·A) |
+| Critic loss | MSE (0.5·δ²) | MSE(V(s), returns) |
+| Optimizer | Plain SGD (fixed α) | Adam |
 | Policy update | Unconstrained gradient step | Clipped surrogate (ε=0.2) |
 | Gradient clipping | None | Global norm = 0.5 |
 | Epochs per update | 1 | 3 |
 | Mini-batches | N/A | 4 (size 32) |
-| Advantage normalization | Clip to [-5,5] | Z-score normalization |
+| Advantage normalization | None (raw one-step TD) | Z-score normalization |
 | Learning rate | 0.001 / 0.002 | 0.0003 / 0.001 |
 
 ## Architecture (unchanged)

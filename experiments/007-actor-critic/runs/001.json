@@ -1,16 +1,17 @@
 {
   "run": 1,
-  "createdAt": "2026-08-31T00:00:00-03:00",
+  "createdAt": "2026-09-30T00:00:00-03:00",
 
   "parameters": {
+    "optimizer": "plain SGD (fixed step size, no momentum, no Adam)",
     "actorLearningRate": 0.001,
     "criticLearningRate": 0.002,
     "gamma": 0.99,
-    "entropyCoefficient": 0.01,
-    "advantageClip": 5,
-    "huberDelta": 5,
     "updateFrequency": "every step (online)",
-    "advantage": "one-step TD: A = r + γ·V(s') - V(s), clipped to ±5"
+    "advantage": "one-step TD: A = r + γ·V(s') - V(s) (unclamped, the TD error δ)",
+    "actorDiscount": "I = γ^t, reset to 1 every episode, applied to the actor only",
+    "actorLoss": "-log π(a|s) · I · A (no entropy bonus)",
+    "criticLoss": "0.5 * (target - V(s))^2 (squared TD error, semi-gradient TD(0))"
   },
 
   "rewards": {
@@ -26,7 +27,7 @@
   },
 
   "results": {
-    "episodes": 127,
-    "bestScore": 23
+    "episodes": 0,
+    "bestScore": 0
   }
 }

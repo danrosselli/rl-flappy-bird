@@ -11,9 +11,17 @@
  * No trajectory buffer. Memory usage is O(1) regardless of
  * episode length, solving the memory issue of vanilla REINFORCE.
  *
- * Advantage: A = r + γ * V(s') - V(s)  (one-step TD error, clipped)
+ * Follows the one-step Actor-Critic of Sutton & Barto §13.5, with
+ * two deliberate deviations: the discount-so-far factor I = γ^t of
+ * the episodic pseudocode is omitted from the actor update, as in
+ * most practical implementations, and an entropy bonus and advantage
+ * clipping are added to the actor update. The one-step TD error
+ * δ = r + γ * V(s') - V(s) is the single critique signal that
+ * trains both networks.
+ *
+ * Advantage: A = δ = r + γ * V(s') - V(s)  (one-step TD error, clipped)
  * Actor loss:  -log π(a|s) * A - ENTROPY_COEF * H(π)
- * Critic loss: Huber(target, V(s)) with δ = HUBER_DELTA
+ * Critic loss: 0.5 * (target - V(s))^2  (semi-gradient TD(0))
  * ============================================================ */
 
 import * as tf from '@tensorflow/tfjs';
@@ -39,23 +47,17 @@ const ENTROPY_COEF = 0.01;
 // Clamps the TD advantage before it drives the actor's gradient step.
 // A single large advantage (e.g. from the -20 death reward) can
 // otherwise push probabilities to the extremes in one update.
+// The critic still trains on the true, unclipped target.
 const ADVANTAGE_CLIP = 5;
-
-// Huber loss transition point for the critic. Below this TD error the
-// loss is quadratic (like MSE); above it, it's linear, so a single
-// outlier transition (e.g. the death frame) doesn't produce an
-// exploding gradient that destabilizes V(s) for other states.
-const HUBER_DELTA = 5;
 
 // Single source of truth for the critic objective: it is both the loss
 // passed to critic.compile() and the function minimized in update().
-function huberLoss(yTrue, yPred) {
+// 0.5 * MSE is the squared TD error of the classic semi-gradient
+// update w <- w + alpha * delta * grad v(s; w).
+function mseLoss(yTrue, yPred) {
   return tf.tidy(() => {
     const error = yTrue.sub(yPred);
-    const absError = error.abs();
-    const quadratic = tf.minimum(absError, HUBER_DELTA);
-    const linear = absError.sub(quadratic);
-    return quadratic.square().mul(0.5).add(linear.mul(HUBER_DELTA)).mean();
+    return error.square().mul(0.5).mean();
   });
 }
 
@@ -120,7 +122,7 @@ export class ActorCriticAgent {
 
     model.compile({
       optimizer: tf.train.adam(CRITIC_LEARNING_RATE),
-      loss: huberLoss
+      loss: mseLoss
     });
 
     return model;
@@ -158,14 +160,15 @@ export class ActorCriticAgent {
   }
 
   /**
-   * Online Actor-Critic update (one-step TD).
+   * Online Actor-Critic update (one-step TD) — Sutton & Barto §13.5,
+   * without the discount-so-far factor I.
    *
    * Called every frame after the action is executed and the reward
    * is observed, along with the next state.
    *
-   * 1. Compute advantage: A = r + γ * V(s') - V(s)  (clipped)
-   * 2. Update critic:  minimize Huber(target, V(s))
-   * 3. Update actor:   minimize -log π(a|s) * A - entropyCoef * H(π)
+   * 1. Compute advantage: A = r + γ * V(s') - V(s)   (the TD error δ, clipped for the actor)
+   * 2. Update critic:  minimize 0.5 * (target - V(s))^2   (semi-gradient)
+   * 3. Update actor:   minimize -log π(a|s) * A - ENTROPY_COEF * H(π)
    */
   async update(prevState, prevAction, prevValue, reward, nextState, done) {
     if (this.trainingInProgress) {
@@ -174,35 +177,43 @@ export class ActorCriticAgent {
 
     this.trainingInProgress = true;
 
+    // Declared outside the try so the finally can free them even when
+    // something throws between creation and the normal dispose().
+    let stateTensor = null;
+    let nextStateTensor = null;
+    let valueCurrentTensor = null;
+    let criticLoss = null;
+    let actorLoss = null;
+
     try {
-      const stateTensor = tf.tensor2d([prevState], [1, STATE_SIZE]);
-      const nextStateTensor = tf.tensor2d([nextState], [1, STATE_SIZE]);
+      stateTensor = tf.tensor2d([prevState], [1, STATE_SIZE]);
+      nextStateTensor = tf.tensor2d([nextState], [1, STATE_SIZE]);
 
       // V(s') for advantage calculation. predict() returns a tensor the
       // caller owns — it must be disposed explicitly, otherwise it leaks
-      // one tensor per frame.
-      const valueCurrentTensor = this.critic.predict(nextStateTensor);
+      // one tensor per frame. (dispose() is idempotent, the finally
+      // below is the safety net if dataSync() throws.)
+      valueCurrentTensor = this.critic.predict(nextStateTensor);
       const valueCurrent = valueCurrentTensor.dataSync()[0];
       valueCurrentTensor.dispose();
       const target = reward + (done ? 0 : gamma * valueCurrent);
       let advantage = target - prevValue;
       advantage = Math.max(-ADVANTAGE_CLIP, Math.min(ADVANTAGE_CLIP, advantage));
 
-      // --- Critic update: minimize Huber(target, V(s)) ---
+      // --- Critic update: minimize 0.5 * (target - V(s))^2 ---
       // minimize() scopes gradients to only this model's variables.
-      // The Huber shape (quadratic for small TD errors, linear for
-      // large ones such as the death transition) keeps a single
-      // outlier frame from blowing up the gradient step.
-      const criticLoss = this.critic.optimizer.minimize(() => {
+      // `target` is computed outside the graph, so this is a
+      // semi-gradient step — exactly w <- w + a * delta * grad v(s; w).
+      criticLoss = this.critic.optimizer.minimize(() => {
         const v = this.critic.predict(stateTensor);
         const targetTensor = tf.tensor2d([[target]], [1, 1]);
-        return huberLoss(targetTensor, v);
+        return mseLoss(targetTensor, v);
       }, true);
 
       // --- Actor update: minimize -log π(a|s) * advantage - entropyCoef * H(π) ---
       // The entropy term H(π) = -Σ p·log(p) rewards keeping some spread
       // across actions, so the policy doesn't lock onto one action forever.
-      const actorLoss = this.actor.optimizer.minimize(() => {
+      actorLoss = this.actor.optimizer.minimize(() => {
         const probs = this.actor.predict(stateTensor);
         const safeProbs = probs.add(POLICY_EPSILON);
         const logProbs = safeProbs.log();
@@ -219,16 +230,19 @@ export class ActorCriticAgent {
       this.lastTrainingLoss = actorLoss.dataSync()[0];
       this.lastCriticLoss = criticLoss.dataSync()[0];
 
-      actorLoss.dispose();
-      criticLoss.dispose();
-      stateTensor.dispose();
-      nextStateTensor.dispose();
-
       return this.lastTrainingLoss;
     } catch (error) {
       console.error('Actor-Critic update error:', error);
       return null;
     } finally {
+      // Free everything unconditionally: an exception in the middle of
+      // the update must not leak the state tensors or the loss tensors
+      // (they are created outside minimize()'s internal tidy scope).
+      if (valueCurrentTensor) valueCurrentTensor.dispose();
+      if (actorLoss) actorLoss.dispose();
+      if (criticLoss) criticLoss.dispose();
+      if (stateTensor) stateTensor.dispose();
+      if (nextStateTensor) nextStateTensor.dispose();
       this.trainingInProgress = false;
     }
   }
@@ -309,7 +323,7 @@ export class ActorCriticAgent {
         this.critic = critic;
         this.critic.compile({
           optimizer: tf.train.adam(CRITIC_LEARNING_RATE),
-          loss: huberLoss
+          loss: mseLoss
         });
 
         if (metadata) {
