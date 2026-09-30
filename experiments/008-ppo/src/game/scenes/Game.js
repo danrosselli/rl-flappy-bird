@@ -5,6 +5,11 @@ import {
 } from '../../rl/ppo.js';
 import { recordEpisode } from '../../rl/episodeRecorder.js';
 
+// Escala aplicada a TODAS as recompensas (mantém as proporções da referência).
+// Com γ=0.99 e ~+1/frame, os retornos chegam perto de 100 e o critic não acompanha.
+// Para copiar exatamente a referência, use 1.
+const REWARD_SCALE = 0.1;
+
 export class Game extends Phaser.Scene {
 	constructor() {
 		super('Game');
@@ -15,9 +20,6 @@ export class Game extends Phaser.Scene {
 		this.lastAction = null;
 		this.lastLogProb = null;
 		this.lastValue = null;
-
-		this.lastTargetPipe = null;
-		this.lastDistanceToTarget = null;
 
 		this.agent = new PPOAgent();
 	}
@@ -51,12 +53,10 @@ export class Game extends Phaser.Scene {
 		this.lastAction = null;
 		this.lastLogProb = null;
 		this.lastValue = null;
-		this.lastTargetPipe = null;
-		this.lastDistanceToTarget = null;
 
 		this.zones = [];
 		this.bonusReward = 0;
-		this.progressReward = 0;
+		this.proximityReward = 0;
 
 		const bg = this.add.image(this.scale.width / 2, this.scale.height / 2, 'bg');
 		bg.setDisplaySize(this.scale.width, this.scale.height);
@@ -228,31 +228,24 @@ export class Game extends Phaser.Scene {
 			normalizedSpeed
 		];
 
-		// 2. Calcular Recompensa
+		// 2. Calcular Recompensa (mesma da referência REINFORCE)
 
-		const flapPenalty = this.lastAction === ACTION_FLAP ? -0.01 : 0;
+		// Penalidade leve por velocidade vertical extrema
+		const velPenalty = Math.abs(velY) > 700 ? -0.05 : 0;
 
-		let progressReward = 0;
+		// Custo por flap
+		const flapPenalty = this.lastAction === ACTION_FLAP ? -0.1 : 0;
 
+		// Alinhamento com o centro do gap (gaussiana, 0 a +1 por frame)
 		if (closestPipe) {
-			const currentDistance = Math.abs(this.bird.y - closestPipe.body.center.y);
+			const maxConsideredDy = this.scale.height / 2;
+			const dyRatio = Math.abs(dy) / maxConsideredDy;
+			const sigma = 0.5;
 
-			if (this.lastTargetPipe === closestPipe && this.lastDistanceToTarget !== null) {
-				progressReward = Phaser.Math.Clamp(
-					(this.lastDistanceToTarget - currentDistance) * 0.02,
-					-0.05,
-					0.05
-				);
-			}
-
-			this.lastDistanceToTarget = currentDistance;
-			this.lastTargetPipe = closestPipe;
+			this.proximityReward = Math.exp(-Math.pow(dyRatio, 2) / (2 * sigma * sigma));
 		} else {
-			this.lastDistanceToTarget = null;
-			this.lastTargetPipe = null;
+			this.proximityReward = 0;
 		}
-
-		this.progressReward = progressReward;
 
 		// 3. Evaluate the CURRENT state before any possible PPO update.
 		// This value is the correct bootstrap V(s_t) for the previous transition.
@@ -268,7 +261,7 @@ export class Game extends Phaser.Scene {
 		// value if this transition becomes the end of a rollout.
 
 		if (this.lastState !== null && this.lastAction !== null) {
-			const reward = this.progressReward + flapPenalty + this.bonusReward;
+			const reward = (this.proximityReward + velPenalty + flapPenalty + this.bonusReward) * REWARD_SCALE;
 
 			this.agent.collectStep(
 				this.lastState,
@@ -349,7 +342,7 @@ export class Game extends Phaser.Scene {
 			`DXNext: ${Math.floor(dxNext)}\n` +
 			`DYNext: ${Math.floor(dyNext)}\n` +
 			`GapNext: ${Math.floor(gapNext)}\n` +
-			`Progress: ${this.progressReward.toFixed(3)}\n` +
+			`Prox: ${this.proximityReward.toFixed(2)}\n` +
 			`P-Idle: ${(policy[ACTION_IDLE] * 100).toFixed(1)}%\n` +
 			`P-Flap: ${(policy[ACTION_FLAP] * 100).toFixed(1)}%\n` +
 			`V(s): ${this.lastValue != null ? this.lastValue.toFixed(2) : '-'}\n` +
@@ -496,7 +489,7 @@ export class Game extends Phaser.Scene {
 
 		this.gameOver = true;
 
-		const deathReward = -20;
+		const deathReward = -20 * REWARD_SCALE;
 
 		if (this.lastState !== null && this.lastAction !== null) {
 			// Terminal step: done=true, V(s')=0
@@ -530,13 +523,25 @@ export class Game extends Phaser.Scene {
 	}
 
 	endGame() {
-		try {
-			this.physics.pause();
-		} catch (e) { }
+		if (this.pipes) {
+			try { this.pipes.setVelocityX(0); } catch (e) { }
+		}
 
-		try {
-			this.anims.pauseAll();
-		} catch (e) { }
+		if (this.zones) {
+			this.zones.forEach(zone => {
+				if (zone.body) zone.body.setVelocityX(0);
+			});
+		}
+
+		if (this.bird && this.bird.body) {
+			try {
+				this.bird.setVelocity(0);
+				this.bird.body.setAllowGravity(false);
+			} catch (e) { }
+		}
+
+		try { this.physics.pause(); } catch (e) { }
+		try { this.anims.pauseAll(); } catch (e) { }
 
 		this.add
 			.text(
@@ -554,6 +559,8 @@ export class Game extends Phaser.Scene {
 			.setDepth(1000);
 
 		this.time.delayedCall(500, () => {
+			this.anims.resumeAll();
+			this.physics.resume();
 			this.scene.restart();
 		});
 	}
