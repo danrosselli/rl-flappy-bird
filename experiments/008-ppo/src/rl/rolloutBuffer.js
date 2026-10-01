@@ -26,6 +26,7 @@ export class RolloutBuffer {
     this.values = new Float32Array(capacity);
     this.logProbs = new Float32Array(capacity);
     this.dones = new Uint8Array(capacity);
+    this.overflowWarned = false;
   }
 
   get size() {
@@ -44,10 +45,19 @@ export class RolloutBuffer {
    * @param {number} value  - V(s) from critic
    * @param {number} logProb - log π(a|s) from actor
    * @param {boolean} done  - Whether this is a terminal step
+   * @returns {boolean} false if the step was dropped (buffer full)
    */
   add(state, action, reward, value, logProb, done) {
     if (this.ptr >= this.capacity) {
-      throw new Error('RolloutBuffer overflow');
+      // Training still running while the buffer refilled (slow machine).
+      // Drop the step instead of throwing: the stored rollout is valid and
+      // will be consumed by the next startTraining(), then collection
+      // resumes normally once the buffer is cleared.
+      if (!this.overflowWarned) {
+        this.overflowWarned = true;
+        console.warn('[RolloutBuffer] full: dropping step (training in progress)');
+      }
+      return false;
     }
 
     const offset = this.ptr * STATE_SIZE;
@@ -62,6 +72,7 @@ export class RolloutBuffer {
     this.dones[this.ptr] = done ? 1 : 0;
 
     this.ptr++;
+    return true;
   }
 
   /**
@@ -100,6 +111,11 @@ export class RolloutBuffer {
    * Returns the collected data as tensors for PPO training.
    * Caller must dispose returned tensors.
    *
+   * Every tensor is built from a COPY (.slice, never .subarray): tfjs keeps
+   * the typed-array reference instead of copying it, so tensors created from
+   * buffer memory would alias it — clear() plus the next add() calls would
+   * rewrite states and logProbs while training runs across frames.
+   *
    * @returns {{ states, actions, advantages, returns, oldLogProbs }}
    */
   get() {
@@ -107,22 +123,19 @@ export class RolloutBuffer {
       throw new Error('RolloutBuffer is empty');
     }
 
+    if (!this.advantages || !this.returns) {
+      throw new Error('RolloutBuffer.get() called before computeAdvantages()');
+    }
+
     const n = this.ptr;
 
-    const states = tf.tensor2d(this.states.subarray(0, n * STATE_SIZE), [n, STATE_SIZE]);
-    const actions = tf.tensor1d(Array.from(this.actions.subarray(0, n)), 'int32');
-    const advantages = tf.tensor1d(this.advantages.subarray(0, n));
-    const returns = tf.tensor1d(this.returns.subarray(0, n));
-    const oldLogProbs = tf.tensor1d(this.logProbs.subarray(0, n));
+    const states = tf.tensor2d(this.states.slice(0, n * STATE_SIZE), [n, STATE_SIZE]);
+    const actions = tf.tensor1d(this.actions.slice(0, n), 'int32');
+    const advantages = tf.tensor1d(this.advantages.slice(0, n));
+    const returns = tf.tensor1d(this.returns.slice(0, n));
+    const oldLogProbs = tf.tensor1d(this.logProbs.slice(0, n));
 
     return { states, actions, advantages, returns, oldLogProbs };
-  }
-
-  /**
-   * Get batch size (number of stored steps).
-   */
-  get size() {
-    return this.ptr;
   }
 
   /**
@@ -132,5 +145,6 @@ export class RolloutBuffer {
     this.ptr = 0;
     this.advantages = null;
     this.returns = null;
+    this.overflowWarned = false;
   }
 }

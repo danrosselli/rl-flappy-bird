@@ -220,6 +220,7 @@ export class PPOAgent {
 
     let states = null, actions = null, advantages = null,
         returns = null, oldLogProbs = null, normalizedAdvantages = null;
+    let consumed = false;
 
     try {
       // 1. Compute advantages and returns
@@ -229,9 +230,11 @@ export class PPOAgent {
       ({ states, actions, advantages, returns, oldLogProbs } = this.buffer.get());
       const batchSize = this.buffer.size;
 
-      // Tensors are copies, so the buffer can be freed immediately while the
+      // get() builds tensors from copies of the buffer memory (see
+      // RolloutBuffer.get), so the buffer can be freed immediately while the
       // training runs in time slices across frames.
       this.buffer.clear();
+      consumed = true;
 
       // Normalize advantages with running statistics
       const rawAdvantages = Array.from(advantages.dataSync());
@@ -347,6 +350,10 @@ export class PPOAgent {
       return null;
     } finally {
       // Guarantee cleanup of all rollout tensors even on error.
+      // If computeAdvantages() or get() threw, the rollout is still sitting
+      // in the buffer: drop it so a full buffer can never block add().
+      if (!consumed) this.buffer.clear();
+
       try { if (states) states.dispose(); } catch (e) { }
       try { if (actions) actions.dispose(); } catch (e) { }
       try { if (advantages) advantages.dispose(); } catch (e) { }

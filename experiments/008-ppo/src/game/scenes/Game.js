@@ -495,7 +495,7 @@ export class Game extends Phaser.Scene {
 			// Terminal step: done=true, V(s')=0
 			// The value is 0 for terminal steps because there is no next state.
 
-			this.agent.buffer.add(
+			const stored = this.agent.buffer.add(
 				this.lastState,
 				this.lastAction,
 				deathReward,
@@ -504,10 +504,13 @@ export class Game extends Phaser.Scene {
 				true
 			);
 
-			// Only run a PPO update if the terminal step filled the buffer.
+			// Only run a PPO update if the terminal step was stored and filled
+			// the buffer. If it was dropped (buffer still full while training
+			// runs), the next episode's first collectStep() triggers training
+			// with a correct bootstrap value instead of forcing 0 here.
 			// Otherwise keep accumulating across episode boundaries so the
 			// buffer fills naturally and batches never become tiny.
-			if (this.agent.buffer.isReady()) {
+			if (stored && this.agent.buffer.isReady()) {
 				await this.agent.forceUpdate(0);
 			}
 		}
