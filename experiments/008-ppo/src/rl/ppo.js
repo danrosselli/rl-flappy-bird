@@ -67,6 +67,8 @@ export class PPOAgent {
   constructor() {
     this.actor = this.createActor();
     this.critic = this.createCritic();
+    this.actorOptimizer = tf.train.adam(ACTOR_LR);
+    this.criticOptimizer = tf.train.adam(CRITIC_LR);
     this.buffer = new RolloutBuffer(ROLLOUT_SIZE);
     this.persistence = new PersistenceManager();
 
@@ -75,9 +77,6 @@ export class PPOAgent {
     this.lastClipFraction = null;
     this.trainingInProgress = false;
     this.trainingPromise = null;
-
-    // Current mini-batch data (set before each minimize() call)
-    this._mini = null;
   }
 
   createActor() {
@@ -97,11 +96,6 @@ export class PPOAgent {
       units: ACTION_SIZE,
       activation: 'softmax'
     }));
-
-    model.compile({
-      optimizer: tf.train.adam(ACTOR_LR),
-      loss: 'categoricalCrossentropy'
-    });
 
     return model;
   }
@@ -123,11 +117,6 @@ export class PPOAgent {
       units: 1,
       activation: 'linear'
     }));
-
-    model.compile({
-      optimizer: tf.train.adam(CRITIC_LR),
-      loss: 'meanSquaredError'
-    });
 
     return model;
   }
@@ -278,48 +267,46 @@ export class PPOAgent {
             const miniReturns = tf.gather(returns, idxTensor);
             idxTensor.dispose();
 
-            this._mini = { miniStates, miniActions, miniAdvantages, miniOldLogProbs, miniReturns };
-
             // --- Actor update (with gradient clipping) ---
-            const actorResult = this.actor.optimizer.computeGradients(() => {
-              const probs = this.actor.predict(this._mini.miniStates);
+            const actorResult = this.actorOptimizer.computeGradients(() => {
+              const probs = this.actor.predict(miniStates);
               const safeProbs = probs.add(POLICY_EPSILON);
               const logProbsAll = safeProbs.log();
-              const actionMask = tf.oneHot(this._mini.miniActions, ACTION_SIZE);
+              const actionMask = tf.oneHot(miniActions, ACTION_SIZE);
               const newLogProbs = logProbsAll.mul(actionMask).sum(1);
 
-              const ratio = newLogProbs.sub(this._mini.miniOldLogProbs).exp();
+              const ratio = newLogProbs.sub(miniOldLogProbs).exp();
               const clippedRatio = tf.clipByValue(ratio, 1 - CLIP_EPSILON, 1 + CLIP_EPSILON);
-              const surr1 = ratio.mul(this._mini.miniAdvantages);
-              const surr2 = clippedRatio.mul(this._mini.miniAdvantages);
+              const surr1 = ratio.mul(miniAdvantages);
+              const surr2 = clippedRatio.mul(miniAdvantages);
               const policyLoss = tf.minimum(surr1, surr2).mean().neg();
 
               const entropy = safeProbs.mul(logProbsAll).sum(1).neg().mean();
 
               return policyLoss.sub(entropy.mul(ENTROPY_COEF));
             });
-            this.actor.optimizer.applyGradients(
+            this.actorOptimizer.applyGradients(
               clipGradsByGlobalNorm(actorResult.grads, MAX_GRAD_NORM)
             );
             const aLoss = actorResult.value.dataSync()[0];
 
             // Compute clip fraction for monitoring (shared forward pass)
-            const aProbs = this.actor.predict(this._mini.miniStates);
+            const aProbs = this.actor.predict(miniStates);
             const aSafeProbs = aProbs.add(POLICY_EPSILON);
             const aLogProbsAll = aSafeProbs.log();
-            const aMask = tf.oneHot(this._mini.miniActions, ACTION_SIZE);
+            const aMask = tf.oneHot(miniActions, ACTION_SIZE);
             const aNewLogProbs = aLogProbsAll.mul(aMask).sum(1);
-            const aRatio = aNewLogProbs.sub(this._mini.miniOldLogProbs).exp();
+            const aRatio = aNewLogProbs.sub(miniOldLogProbs).exp();
             const aClipped = aRatio.less(1 - CLIP_EPSILON).logicalOr(aRatio.greater(1 + CLIP_EPSILON));
             const clipFrac = aClipped.toFloat().mean().dataSync()[0];
 
             // --- Critic update (with gradient clipping) ---
-            const criticResult = this.critic.optimizer.computeGradients(() => {
-              const values = this.critic.predict(this._mini.miniStates).squeeze();
-              const valueLoss = values.sub(this._mini.miniReturns).square().mean();
+            const criticResult = this.criticOptimizer.computeGradients(() => {
+              const values = this.critic.predict(miniStates).squeeze();
+              const valueLoss = values.sub(miniReturns).square().mean();
               return valueLoss.mul(VALUE_LOSS_COEF);
             });
-            this.critic.optimizer.applyGradients(
+            this.criticOptimizer.applyGradients(
               clipGradsByGlobalNorm(criticResult.grads, MAX_GRAD_NORM)
             );
             const cLoss = criticResult.value.dataSync()[0];
@@ -337,8 +324,6 @@ export class PPOAgent {
       this.lastActorLoss = totalActorLoss / numBatches;
       this.lastCriticLoss = totalCriticLoss / numBatches;
       this.lastClipFraction = totalClipFrac / numBatches;
-      this._mini = null;
-
       if (tf.engine().backend) {
         const mem = tf.memory();
         console.log(`[PPO] train done | tensors: ${mem.numTensors} | MB: ${(mem.numBytes / 1048576).toFixed(2)}`);
@@ -347,7 +332,6 @@ export class PPOAgent {
       return this.lastActorLoss;
     } catch (error) {
       console.error('PPO training error:', error);
-      this._mini = null;
       return null;
     } finally {
       // Guarantee cleanup of all rollout tensors even on error.
@@ -362,14 +346,9 @@ export class PPOAgent {
       try { if (returns) returns.dispose(); } catch (e) { }
       try { if (oldLogProbs) oldLogProbs.dispose(); } catch (e) { }
 
-      this._mini = null;
       this.trainingInProgress = false;
       this.trainingPromise = null;
     }
-  }
-
-  resetEpisode() {
-    this.buffer.clear();
   }
 
   getPolicy(state) {
@@ -439,16 +418,9 @@ export class PPOAgent {
         }
 
         this.actor = actor;
-        this.actor.compile({
-          optimizer: tf.train.adam(ACTOR_LR),
-          loss: 'categoricalCrossentropy'
-        });
-
         this.critic = critic;
-        this.critic.compile({
-          optimizer: tf.train.adam(CRITIC_LR),
-          loss: 'meanSquaredError'
-        });
+        this.actorOptimizer = tf.train.adam(ACTOR_LR);
+        this.criticOptimizer = tf.train.adam(CRITIC_LR);
 
         if (metadata) {
           const generation = metadata.generation ?? 1;

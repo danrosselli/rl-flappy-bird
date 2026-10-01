@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import {
-	ACTIONS, ACTION_FLAP, ACTION_IDLE,
+	ACTION_FLAP,
 	PPOAgent, ROLLOUT_SIZE, resetBrain
 } from '../../rl/ppo.js';
 import { recordEpisode } from '../../rl/episodeRecorder.js';
@@ -8,7 +8,7 @@ import { recordEpisode } from '../../rl/episodeRecorder.js';
 // Escala aplicada a TODAS as recompensas (mantém as proporções da referência).
 // Com γ=0.99 e ~+1/frame, os retornos chegam perto de 100 e o critic não acompanha.
 // Para copiar exatamente a referência, use 1.
-const REWARD_SCALE = 0.1;
+const REWARD_SCALE = 1;
 
 export class Game extends Phaser.Scene {
 	constructor() {
@@ -247,18 +247,20 @@ export class Game extends Phaser.Scene {
 			this.proximityReward = 0;
 		}
 
-		// 3. Evaluate the CURRENT state before any possible PPO update.
-		// This value is the correct bootstrap V(s_t) for the previous transition.
-
-		const currentValue = this.agent.getValue(currentState);
-
-		// 4. PPO: close the previous transition.
+		// 3. Uma única passada por rede neste frame: chooseAction devolve
+		// as probabilidades, a ação e V(currentState).
 		//
-		// The transition stored on the previous frame is:
-		// (lastState, lastAction, reward, currentState)
-		//
-		// Therefore currentValue = V(currentState) is the correct bootstrap
-		// value if this transition becomes the end of a rollout.
+		// V(currentState) é o bootstrap correto para a transição anterior.
+		// train() só altera pesos a partir do próximo frame (primeiro
+		// `await nextFrame()`), então chamar chooseAction antes de collectStep
+		// equivale a avaliar depois de um possível update.
+
+		const policyDecision = this.agent.chooseAction(currentState);
+		const action = policyDecision.action;
+		const currentValue = policyDecision.value;
+
+		// 4. PPO: fecha a transição anterior
+		// (lastState, lastAction, reward, currentState).
 
 		if (this.lastState !== null && this.lastAction !== null) {
 			const reward = (this.proximityReward + velPenalty + flapPenalty + this.bonusReward) * REWARD_SCALE;
@@ -275,11 +277,6 @@ export class Game extends Phaser.Scene {
 		}
 
 		this.bonusReward = 0;
-
-		// 5. Choose the next action AFTER a possible PPO update.
-
-		const policyDecision = this.agent.chooseAction(currentState);
-		const action = policyDecision.action;
 
 		// 6. Executar Ação
 
@@ -328,7 +325,6 @@ export class Game extends Phaser.Scene {
 
 		// 9. Atualizar HUD
 
-		const policy = this.agent.getPolicy(currentState);
 		const buffer = this.agent.buffer;
 
 		this.hudText.setText(
@@ -343,8 +339,8 @@ export class Game extends Phaser.Scene {
 			`DYNext: ${Math.floor(dyNext)}\n` +
 			`GapNext: ${Math.floor(gapNext)}\n` +
 			`Prox: ${this.proximityReward.toFixed(2)}\n` +
-			`P-Idle: ${(policy[ACTION_IDLE] * 100).toFixed(1)}%\n` +
-			`P-Flap: ${(policy[ACTION_FLAP] * 100).toFixed(1)}%\n` +
+			`P-Idle: ${(policyDecision.idleProbability * 100).toFixed(1)}%\n` +
+			`P-Flap: ${(policyDecision.flapProbability * 100).toFixed(1)}%\n` +
 			`V(s): ${this.lastValue != null ? this.lastValue.toFixed(2) : '-'}\n` +
 			`Buffer: ${buffer.size}/${ROLLOUT_SIZE}\n` +
 			`A-Loss: ${this.agent.lastActorLoss === null ? '-' : this.agent.lastActorLoss.toFixed(4)}\n` +
