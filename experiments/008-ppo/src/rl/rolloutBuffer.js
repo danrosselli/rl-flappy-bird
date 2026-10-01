@@ -1,7 +1,7 @@
 /* ============================================================
  * ROLLOUT BUFFER — PPO
  * ------------------------------------------------------------
- * Circular buffer that collects a fixed number of steps (128)
+ * Buffer that collects a fixed number of steps (ROLLOUT_SIZE)
  * before triggering a PPO update. Stores transitions and
  * computes GAE-lambda advantages and discounted returns.
  *
@@ -16,7 +16,7 @@ export class RolloutBuffer {
   /**
    * @param {number} capacity - Maximum number of steps to store
    */
-  constructor(capacity = 128) {
+  constructor(capacity = 1024) {
     this.capacity = capacity;
     this.ptr = 0;
 

@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import {
 	ACTIONS, ACTION_FLAP, ACTION_IDLE,
-	PPOAgent, resetBrain
+	PPOAgent, ROLLOUT_SIZE, resetBrain
 } from '../../rl/ppo.js';
 import { recordEpisode } from '../../rl/episodeRecorder.js';
 
@@ -346,7 +346,7 @@ export class Game extends Phaser.Scene {
 			`P-Idle: ${(policy[ACTION_IDLE] * 100).toFixed(1)}%\n` +
 			`P-Flap: ${(policy[ACTION_FLAP] * 100).toFixed(1)}%\n` +
 			`V(s): ${this.lastValue != null ? this.lastValue.toFixed(2) : '-'}\n` +
-			`Buffer: ${buffer.size}/128\n` +
+			`Buffer: ${buffer.size}/${ROLLOUT_SIZE}\n` +
 			`A-Loss: ${this.agent.lastActorLoss === null ? '-' : this.agent.lastActorLoss.toFixed(4)}\n` +
 			`C-Loss: ${this.agent.lastCriticLoss === null ? '-' : this.agent.lastCriticLoss.toFixed(4)}\n` +
 			`Clip%: ${this.agent.lastClipFraction === null ? '-' : (this.agent.lastClipFraction * 100).toFixed(1)}%\n` +

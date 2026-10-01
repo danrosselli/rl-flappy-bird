@@ -17,7 +17,6 @@
 import * as tf from '@tensorflow/tfjs';
 import { RolloutBuffer, STATE_SIZE } from './rolloutBuffer.js';
 import { PersistenceManager } from './persistenceManager.js';
-import { RunningMeanStd } from './runningMeanStd.js';
 
 export const ACTION_IDLE = 0;
 export const ACTION_FLAP = 1;
@@ -26,9 +25,9 @@ export { STATE_SIZE };
 export const ACTION_SIZE = 2;
 
 // --- PPO Hyperparameters ---
-const ROLLOUT_SIZE = 128;
+export const ROLLOUT_SIZE = 1024;
 const PPO_EPOCHS = 3;
-const MINI_BATCH_SIZE = 32;
+const MINI_BATCH_SIZE = 128;
 const CLIP_EPSILON = 0.2;
 const GAMMA = 0.99;
 const LAMBDA = 0.95;
@@ -76,7 +75,6 @@ export class PPOAgent {
     this.lastClipFraction = null;
     this.trainingInProgress = false;
     this.trainingPromise = null;
-    this.advantageNormalizer = new RunningMeanStd();
 
     // Current mini-batch data (set before each minimize() call)
     this._mini = null;
@@ -236,11 +234,14 @@ export class PPOAgent {
       this.buffer.clear();
       consumed = true;
 
-      // Normalize advantages with running statistics
+      // Normalize advantages per rollout (zero mean, unit std of THIS batch)
       const rawAdvantages = Array.from(advantages.dataSync());
-      this.advantageNormalizer.update(rawAdvantages);
+      const advMean = rawAdvantages.reduce((s, v) => s + v, 0) / batchSize;
+      const advStd = Math.sqrt(
+        rawAdvantages.reduce((s, v) => s + (v - advMean) ** 2, 0) / batchSize
+      );
       normalizedAdvantages = tf.tensor1d(
-        rawAdvantages.map(v => this.advantageNormalizer.normalize(v))
+        rawAdvantages.map(v => (v - advMean) / (advStd + 1e-8))
       );
 
       // Shuffle independently for every PPO epoch.
@@ -393,6 +394,13 @@ export class PPOAgent {
   }
 
   async saveBrain(generation, highScore = 0) {
+    // Wait for any in-flight PPO update: model.save() reads the weights
+    // asynchronously, and applyGradients() replaces them in the meantime,
+    // which could save inconsistent weights or make the save fail.
+    if (this.trainingPromise) {
+      await this.trainingPromise;
+    }
+
     await this.persistence.saveActor(this.actor);
     await this.persistence.saveCritic(this.critic);
     await this.persistence.saveMetadata({
