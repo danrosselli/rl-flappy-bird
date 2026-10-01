@@ -5,11 +5,6 @@ import {
 } from '../../rl/ppo.js';
 import { recordEpisode } from '../../rl/episodeRecorder.js';
 
-// Escala aplicada a TODAS as recompensas (mantém as proporções da referência).
-// Com γ=0.99 e ~+1/frame, os retornos chegam perto de 100 e o critic não acompanha.
-// Para copiar exatamente a referência, use 1.
-const REWARD_SCALE = 1;
-
 export class Game extends Phaser.Scene {
 	constructor() {
 		super('Game');
@@ -263,7 +258,7 @@ export class Game extends Phaser.Scene {
 		// (lastState, lastAction, reward, currentState).
 
 		if (this.lastState !== null && this.lastAction !== null) {
-			const reward = (this.proximityReward + velPenalty + flapPenalty + this.bonusReward) * REWARD_SCALE;
+			const reward = this.proximityReward + velPenalty + flapPenalty + this.bonusReward;
 
 			this.agent.collectStep(
 				this.lastState,
@@ -485,7 +480,7 @@ export class Game extends Phaser.Scene {
 
 		this.gameOver = true;
 
-		const deathReward = -20 * REWARD_SCALE;
+		const deathReward = -20;
 
 		if (this.lastState !== null && this.lastAction !== null) {
 			// Terminal step: done=true, V(s')=0
