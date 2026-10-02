@@ -1,0 +1,53 @@
+{
+  "name": "008-dw-ppo",
+  "description": "DW-PPO (Death-Window PPO) — Batched updates with GAE-lambda and clipped surrogate objective",
+  "stateSize": 8,
+  "stateFeatures": [
+    {"name": "dx", "description": "Horizontal distance to the current pipe", "normalization": "(dx / 529) - 1, range [-1, +1]"},
+    {"name": "dy", "description": "Vertical distance to the center of the current pipe gap", "normalization": "clamp(dy / 400, -1, 1)"},
+    {"name": "velY", "description": "Vertical velocity of the bird", "normalization": "clamp(velY / 1000, -1, 1)"},
+    {"name": "gap", "description": "Height of the current pipe gap", "normalization": "((gap - 200) / 105) - 1, range [-1, +1]"},
+    {"name": "dxNext", "description": "Horizontal distance to the next pipe", "normalization": "(dx / 529) - 1, range [-1, +1]"},
+    {"name": "dyNext", "description": "Vertical distance to the center of the next pipe gap", "normalization": "clamp(dy / 400, -1, 1)"},
+    {"name": "gapNext", "description": "Height of the next pipe gap", "normalization": "((gap - 200) / 105) - 1, range [-1, +1]"},
+    {"name": "speed", "description": "Current pipe speed", "normalization": "((speed - 200) / 100) - 1, range [-1, +1]"}
+  ],
+  "terminalState": [0, 0, 0, 0, 0, 0, 0, 0],
+  "actor": {
+    "architecture": "sequential",
+    "layers": [
+      {"type": "dense", "units": 64, "activation": "relu", "inputShape": 8},
+      {"type": "dense", "units": 64, "activation": "relu"},
+      {"type": "dense", "units": 2, "activation": "softmax"}
+    ],
+    "optimizer": "adam",
+    "optimizerParams": {"learningRate": 0.0003},
+    "loss": "clipped surrogate objective + entropy bonus"
+  },
+  "critic": {
+    "architecture": "sequential",
+    "layers": [
+      {"type": "dense", "units": 64, "activation": "relu", "inputShape": 8},
+      {"type": "dense", "units": 64, "activation": "relu"},
+      {"type": "dense", "units": 1, "activation": "linear"}
+    ],
+    "optimizer": "adam",
+    "optimizerParams": {"learningRate": 0.001},
+    "loss": "MSE(V(s), returns)"
+  },
+  "ppo": {
+    "rolloutSize": 128,
+    "ppoEpochs": 3,
+    "miniBatchSize": 32,
+    "clipEpsilon": 0.2,
+    "gamma": 0.99,
+    "lambda": 0.95,
+    "entropyCoef": 0.01,
+    "valueLossCoef": 0.5,
+    "maxGradNorm": 0.5
+  },
+  "exploration": {
+    "strategy": "softmax-policy",
+    "description": "Action sampled from actor's probability distribution (no epsilon-greedy)"
+  }
+}

@@ -1,0 +1,7 @@
+{
+    "name": "008-ppo",
+    "scripts": {
+        "dev": "vite --config ../../vite/config.dev.mjs",
+        "build": "vite build --config ../../vite/config.prod.mjs"
+    }
+}

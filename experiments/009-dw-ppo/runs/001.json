@@ -1,0 +1,23 @@
+{
+  "experiment": "009-dw-ppo",
+  "run": 1,
+  "algorithm": "dw-ppo",
+  "parameters": {
+    "rolloutSize": 10000,
+    "ppoEpochs": 3,
+    "miniBatchSize": 32,
+    "clipEpsilon": 0.2,
+    "gamma": 0.99,
+    "lambda": 0.95,
+    "entropyCoef": 0.01,
+    "valueLossCoef": 0.5,
+    "maxGradNorm": 0.5,
+    "actorLR": 0.0003,
+    "criticLR": 0.001
+  },
+  "results": {
+    "episodes": 0,
+    "bestScore": 0,
+    "averageScore": 0
+  }
+}
