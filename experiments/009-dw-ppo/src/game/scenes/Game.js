@@ -464,6 +464,9 @@ export class Game extends Phaser.Scene {
 
 		this.gameOver = true;
 
+		// Congela o jogo na hora da morte; o treino roda com a tela parada.
+		this.endGame();
+
 		const deathReward = -20;
 
 		if (this.lastState !== null && this.lastAction !== null) {
@@ -483,7 +486,7 @@ export class Game extends Phaser.Scene {
 
 		await this.agent.saveBrain(this.generation, this.highScore);
 
-		this.endGame();
+		this.restartGame();
 	}
 
 	endGame() {
@@ -521,7 +524,9 @@ export class Game extends Phaser.Scene {
 			)
 			.setOrigin(0.5)
 			.setDepth(1000);
+	}
 
+	restartGame() {
 		this.time.delayedCall(500, () => {
 			this.anims.resumeAll();
 			this.physics.resume();
